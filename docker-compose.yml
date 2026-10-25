@@ -1,0 +1,18 @@
+services:
+  fly-high-control:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fly-high-control
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    # Required when this host itself is an announcement target.
+    devices:
+      - /dev/snd:/dev/snd
+
+    # Reuse the host's SSH config, keys and known_hosts for SSH-mode targets.
+    volumes:
+      - ${HOME}/.ssh:/root/.ssh:ro

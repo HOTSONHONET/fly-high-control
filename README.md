@@ -101,3 +101,72 @@ Then invoke `/announce` from Slack. The repeat count must be between 1 and 10.
 `SLACK_ALLOWED_USER_IDS` is mandatory. Requests from Slack users not in that allowlist are rejected before any announcement is executed.
 
 Messages are passed directly as process arguments for local TTS and are base64 encoded before being sent to SSH targets, so announcement text is not treated as a shell command.
+
+
+## Run with Docker Compose
+
+This is the recommended deployment mode for an always-on NAS host.
+
+Build and start:
+
+```bash
+docker compose up -d --build
+```
+
+Check status and logs:
+
+```bash
+docker compose ps
+docker compose logs -f fly-high-control
+```
+
+Stop the service:
+
+```bash
+docker compose down
+```
+
+Because the service uses `restart: unless-stopped`, Docker will restart it automatically after crashes and host reboots once Docker itself starts.
+
+### Local audio from the container
+
+The Compose file passes the host ALSA device tree into the container:
+
+```yaml
+devices:
+  - /dev/snd:/dev/snd
+```
+
+For Legion announcements, keep:
+
+```env
+ANNOUNCE_LEGION_MODE=local
+ANNOUNCE_LEGION_AUDIO_DEVICE=plughw:1,0
+```
+
+If the ALSA device numbering changes, check the host with:
+
+```bash
+aplay -l
+```
+
+and update the environment value.
+
+### SSH announcements from the container
+
+The Compose file mounts the host SSH directory read-only:
+
+```yaml
+volumes:
+  - ${HOME}/.ssh:/root/.ssh:ro
+```
+
+Before starting the controller, verify the host can reach the remote machine non-interactively:
+
+```bash
+ssh fly-high-acer 'echo ok'
+```
+
+The same SSH config, key and `known_hosts` entries are then available inside the container.
+
+If Docker Compose is launched from a context where `HOME` is not set, replace `${HOME}` in `docker-compose.yml` with the absolute home path, for example `/home/hotson/.ssh`.

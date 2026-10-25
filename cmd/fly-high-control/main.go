@@ -92,13 +92,13 @@ func handleSlashCommand(
 	parsed, err := announce.Parse(cmd.Text, cfg.TargetNames)
 	if err != nil {
 		client.Ack(*evt.Request, map[string]any{
-			"text": fmt.Sprintf("❌ %v\nExample: /announce legion Dinner is ready", err),
+			"text": fmt.Sprintf("❌ %v\nExample: /announce 3 legion Dinner is ready", err),
 		})
 		return
 	}
 
 	client.Ack(*evt.Request, map[string]any{
-		"text": fmt.Sprintf("🔊 Sending announcement to *%s*…", parsed.Target),
+		"text": fmt.Sprintf("🔊 Sending announcement to *%s* %d time(s)…", parsed.Target, parsed.Repeat),
 	})
 
 	go func() {
@@ -123,7 +123,7 @@ func handleSlashCommand(
 		_, errPost := api.PostEphemeral(
 			cmd.ChannelID,
 			cmd.UserID,
-			slack.MsgOptionText(fmt.Sprintf("✅ Announcement sent to *%s*.", parsed.Target), false),
+			slack.MsgOptionText(fmt.Sprintf("✅ Announcement sent to *%s* %d time(s).", parsed.Target, parsed.Repeat), false),
 		)
 		if errPost != nil {
 			log.Printf("failed to post Slack success response: %v", errPost)

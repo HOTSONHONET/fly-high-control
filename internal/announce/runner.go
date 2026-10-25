@@ -33,7 +33,7 @@ func (r *Runner) Run(ctx context.Context, cmd Command) error {
 	if cmd.Target == "all" {
 		var errs []string
 		for _, target := range r.targets {
-			if err := r.runTarget(ctx, target, cmd.Message); err != nil {
+			if err := r.runRepeated(ctx, target, cmd.Message, cmd.Repeat); err != nil {
 				errs = append(errs, fmt.Sprintf("%s: %v", target.Name, err))
 			}
 		}
@@ -47,7 +47,16 @@ func (r *Runner) Run(ctx context.Context, cmd Command) error {
 	if !ok {
 		return fmt.Errorf("target %q is not configured", cmd.Target)
 	}
-	return r.runTarget(ctx, target, cmd.Message)
+	return r.runRepeated(ctx, target, cmd.Message, cmd.Repeat)
+}
+
+func (r *Runner) runRepeated(ctx context.Context, target Target, message string, repeat int) error {
+	for i := 0; i < repeat; i++ {
+		if err := r.runTarget(ctx, target, message); err != nil {
+			return fmt.Errorf("repeat %d/%d: %w", i+1, repeat, err)
+		}
+	}
+	return nil
 }
 
 func (r *Runner) runTarget(ctx context.Context, target Target, message string) error {

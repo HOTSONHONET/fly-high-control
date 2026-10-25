@@ -5,15 +5,15 @@ Slack control plane for the Fly High NAS / homelab.
 ## Current feature
 
 ```text
-/announce <legion|acer|all> <message>
+/announce <num-times> <legion|acer|all> <message>
 ```
 
 Examples:
 
 ```text
-/announce legion Dinner is ready
-/announce acer Please come to the living room
-/announce all Testing the announcement system
+/announce 1 legion Dinner is ready
+/announce 2 acer Please come to the living room
+/announce 3 all Testing the announcement system
 ```
 
 The controller uses Slack Socket Mode, so it does not require a public HTTP endpoint.
@@ -94,7 +94,7 @@ When the service connects successfully, it logs:
 connected to Slack
 ```
 
-Then invoke `/announce` from Slack.
+Then invoke `/announce` from Slack. The repeat count must be between 1 and 10.
 
 ## Security
 

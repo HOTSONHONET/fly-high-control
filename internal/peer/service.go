@@ -37,7 +37,7 @@ func New(cfg config.Config, runner *announce.Runner) *Service {
 		cfg:       cfg,
 		runner:    runner,
 		collector: monitor.New(cfg.NodeName),
-		client:    &http.Client{Timeout: 20 * time.Second},
+		client:    &http.Client{Timeout: cfg.AnnounceTimeout},
 	}
 }
 
@@ -73,7 +73,7 @@ func (s *Service) handleAnnounce(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.AnnounceTimeout)
 	defer cancel()
 	if err := s.runner.RunLocal(ctx, req.Message, req.Repeat); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

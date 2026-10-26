@@ -245,9 +245,9 @@ Create these slash commands in the same Slack app:
 Each accepts an optional target:
 
 ```text
-/status legion
-/status acer
-/status all
+/fly-status legion
+/fly-status acer
+/fly-status all
 
 /gpu legion
 /disk all
@@ -260,7 +260,7 @@ If you omit the target, the command runs against whichever node received the Sla
 
 ### What each command returns
 
-`/status`
+`/fly-status`
 
 - uptime
 - load average
@@ -330,7 +330,7 @@ rather than failing the whole monitoring request.
 For example:
 
 ```text
-/status all
+/fly-status all
 ```
 
 If Acer receives the Slack event:

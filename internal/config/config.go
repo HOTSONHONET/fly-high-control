@@ -4,16 +4,23 @@ import (
 	"fmt"
 	"os"
 	"strings"
-
-	"github.com/HOTSONHONET/fly-high-control/internal/announce"
 )
 
+type Peer struct {
+	Name string
+	URL  string
+}
+
 type Config struct {
-	AppToken     string
-	BotToken     string
-	AllowedUsers map[string]struct{}
-	Targets      []announce.Target
-	TargetNames  map[string]struct{}
+	AppToken       string
+	BotToken       string
+	AllowedUsers   map[string]struct{}
+	NodeName       string
+	ListenAddr     string
+	ClusterToken   string
+	AudioDevice    string
+	Peers          map[string]Peer
+	TargetNames    map[string]struct{}
 }
 
 func Load() (Config, error) {
@@ -21,7 +28,12 @@ func Load() (Config, error) {
 		AppToken:     strings.TrimSpace(os.Getenv("SLACK_APP_TOKEN")),
 		BotToken:     strings.TrimSpace(os.Getenv("SLACK_BOT_TOKEN")),
 		AllowedUsers: csvSet(os.Getenv("SLACK_ALLOWED_USER_IDS")),
-		TargetNames:  csvSet(defaultIfEmpty(os.Getenv("ANNOUNCE_TARGETS"), "legion,acer")),
+		NodeName:     strings.ToLower(strings.TrimSpace(os.Getenv("NODE_NAME"))),
+		ListenAddr:   defaultIfEmpty(os.Getenv("LISTEN_ADDR"), ":8787"),
+		ClusterToken: strings.TrimSpace(os.Getenv("FLY_HIGH_CLUSTER_TOKEN")),
+		AudioDevice:  strings.TrimSpace(os.Getenv("ANNOUNCE_AUDIO_DEVICE")),
+		Peers:        map[string]Peer{},
+		TargetNames:  map[string]struct{}{},
 	}
 
 	if !strings.HasPrefix(cfg.AppToken, "xapp-") {
@@ -33,17 +45,31 @@ func Load() (Config, error) {
 	if len(cfg.AllowedUsers) == 0 {
 		return Config{}, fmt.Errorf("SLACK_ALLOWED_USER_IDS must contain at least one Slack user ID")
 	}
+	if cfg.NodeName == "" {
+		return Config{}, fmt.Errorf("NODE_NAME must be set")
+	}
+	if cfg.ClusterToken == "" {
+		return Config{}, fmt.Errorf("FLY_HIGH_CLUSTER_TOKEN must be set")
+	}
 
-	for name := range cfg.TargetNames {
-		prefix := "ANNOUNCE_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_")) + "_"
-		mode := strings.ToLower(defaultIfEmpty(os.Getenv(prefix+"MODE"), "ssh"))
+	cfg.TargetNames[cfg.NodeName] = struct{}{}
 
-		cfg.Targets = append(cfg.Targets, announce.Target{
-			Name:        name,
-			Mode:        mode,
-			SSHHost:     strings.TrimSpace(os.Getenv(prefix + "SSH_HOST")),
-			AudioDevice: strings.TrimSpace(os.Getenv(prefix + "AUDIO_DEVICE")),
-		})
+	for _, item := range strings.Split(os.Getenv("PEERS"), ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		parts := strings.SplitN(item, "=", 2)
+		if len(parts) != 2 {
+			return Config{}, fmt.Errorf("invalid PEERS entry %q, expected name=url", item)
+		}
+		name := strings.ToLower(strings.TrimSpace(parts[0]))
+		url := strings.TrimRight(strings.TrimSpace(parts[1]), "/")
+		if name == "" || url == "" {
+			return Config{}, fmt.Errorf("invalid PEERS entry %q", item)
+		}
+		cfg.Peers[name] = Peer{Name: name, URL: url}
+		cfg.TargetNames[name] = struct{}{}
 	}
 
 	return cfg, nil

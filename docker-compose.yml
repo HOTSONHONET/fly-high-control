@@ -1,0 +1,21 @@
+services:
+  fly-high-control:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fly-high-control
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    ports:
+      - "8787:8787"
+
+    # Required because every node executes its own announcements locally.
+    devices:
+      - /dev/snd:/dev/snd
+
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro

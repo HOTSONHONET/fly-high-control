@@ -227,3 +227,117 @@ Then set the corresponding `ANNOUNCE_AUDIO_DEVICE`.
 - The service executes fixed local TTS actions rather than accepting shell commands.
 - Announcement text is passed as a process argument to `espeak-ng`.
 - Keep port 8787 available only to your trusted LAN / private network.
+
+
+## Monitoring commands
+
+Create these slash commands in the same Slack app:
+
+```text
+/status
+/gpu
+/disk
+/docker
+/uptime
+/battery
+```
+
+Each accepts an optional target:
+
+```text
+/status legion
+/status acer
+/status all
+
+/gpu legion
+/disk all
+/docker acer
+/uptime all
+/battery legion
+```
+
+If you omit the target, the command runs against whichever node received the Slack event.
+
+### What each command returns
+
+`/status`
+
+- uptime
+- load average
+- CPU core count
+- memory usage
+- root filesystem usage
+- battery state
+- GPU summary when NVIDIA access is available
+
+`/gpu`
+
+- GPU model
+- temperature
+- utilization
+- VRAM used / total
+
+`/disk`
+
+- root filesystem used / total and percentage
+
+`/docker`
+
+- container name
+- state
+- Docker status text
+
+The Docker socket is mounted read-only into the control container:
+
+```yaml
+- /var/run/docker.sock:/var/run/docker.sock:ro
+```
+
+`/uptime`
+
+- node uptime
+
+`/battery`
+
+- battery percentage and charging state when a BAT* device exists
+
+### Legion GPU monitoring
+
+The base Compose file works on both Acer and Legion.
+
+On Legion, start with the NVIDIA override so the control container can query the RTX GPU:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+```
+
+On Acer, use the normal command:
+
+```bash
+docker compose up -d --build
+```
+
+If NVIDIA access is not available in the container, `/gpu` reports:
+
+```text
+unavailable on this node/container
+```
+
+rather than failing the whole monitoring request.
+
+### Distributed monitoring flow
+
+For example:
+
+```text
+/status all
+```
+
+If Acer receives the Slack event:
+
+1. Acer collects its own local metrics.
+2. Acer calls Legion's authenticated peer monitoring API.
+3. Legion collects its own local metrics.
+4. Acer posts both reports back to you in Slack.
+
+If Legion is offline, Acer's report still succeeds and Legion is shown as unreachable.

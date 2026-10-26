@@ -134,11 +134,11 @@ func handleAnnounceCommand(
 	}
 
 	client.Ack(*evt.Request, map[string]any{
-		"text": fmt.Sprintf("🔊 Sending announcement to *%s* %d time(s)…", parsed.Target, parsed.Repeat),
+		"text": fmt.Sprintf("🔊 Sending announcement to *%s* %d time(s)…\nMessage: %s", parsed.Target, parsed.Repeat, parsed.Message),
 	})
 
 	go func() {
-		runCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
+		runCtx, cancel := context.WithTimeout(context.Background(), cfg.AnnounceTimeout)
 		defer cancel()
 
 		results := peerService.Execute(runCtx, parsed)
@@ -154,7 +154,7 @@ func handleAnnounceCommand(
 
 		if len(failed) > 0 {
 			log.Printf("announcement partial/failed target=%s user=%s failures=%v", parsed.Target, cmd.UserID, failed)
-			text := "⚠️ Announcement completed with issues."
+			text := fmt.Sprintf("⚠️ Announcement completed with issues.\nMessage: %s", parsed.Message)
 			if len(okNodes) > 0 {
 				text += fmt.Sprintf("\n✅ %s", strings.Join(okNodes, ", "))
 			}
@@ -171,7 +171,7 @@ func handleAnnounceCommand(
 			cmd.ChannelID,
 			cmd.UserID,
 			slack.MsgOptionText(
-				fmt.Sprintf("✅ Announcement sent %d time(s) to: *%s*.", parsed.Repeat, strings.Join(okNodes, ", ")),
+				fmt.Sprintf("✅ Announcement sent %d time(s) to: *%s*.\nMessage: %s", parsed.Repeat, strings.Join(okNodes, ", "), parsed.Message),
 				false,
 			),
 		)

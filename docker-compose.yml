@@ -9,10 +9,9 @@ services:
     env_file:
       - .env
 
-    # Required when this host itself is an announcement target.
+    ports:
+      - "8787:8787"
+
+    # Required because every node executes its own announcements locally.
     devices:
       - /dev/snd:/dev/snd
-
-    # Reuse the host's SSH config, keys and known_hosts for SSH-mode targets.
-    volumes:
-      - ${HOME}/.ssh:/root/.ssh:ro

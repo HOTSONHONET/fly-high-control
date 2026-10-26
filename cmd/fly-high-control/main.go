@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/http"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/HOTSONHONET/fly-high-control/internal/announce"
 	"github.com/HOTSONHONET/fly-high-control/internal/config"
+	"github.com/HOTSONHONET/fly-high-control/internal/peer"
 	"github.com/joho/godotenv"
 	"github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
@@ -24,19 +26,40 @@ func main() {
 		log.Fatalf("config: %v", err)
 	}
 
+	runner := announce.NewRunner(cfg.AudioDevice)
+	peerService := peer.New(cfg, runner)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	httpServer := &http.Server{
+		Addr:              cfg.ListenAddr,
+		Handler:           peerService.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+
+	go func() {
+		log.Printf("peer API listening on %s as node=%s", cfg.ListenAddr, cfg.NodeName)
+		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("peer API: %v", err)
+		}
+	}()
+	go func() {
+		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = httpServer.Shutdown(shutdownCtx)
+	}()
+
 	api := slack.New(
 		cfg.BotToken,
 		slack.OptionAppLevelToken(cfg.AppToken),
 	)
 	client := socketmode.New(api)
-	runner := announce.NewRunner(cfg.Targets)
 
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
+	go handleEvents(ctx, client, api, cfg, peerService)
 
-	go handleEvents(ctx, client, api, cfg, runner)
-
-	log.Printf("fly-high-control connecting to Slack Socket Mode")
+	log.Printf("fly-high-control connecting to Slack Socket Mode as node=%s", cfg.NodeName)
 	if err := client.RunContext(ctx); err != nil && ctx.Err() == nil {
 		log.Fatalf("socket mode: %v", err)
 	}
@@ -47,7 +70,7 @@ func handleEvents(
 	client *socketmode.Client,
 	api *slack.Client,
 	cfg config.Config,
-	runner *announce.Runner,
+	peerService *peer.Service,
 ) {
 	for {
 		select {
@@ -60,7 +83,7 @@ func handleEvents(
 			case socketmode.EventTypeConnectionError:
 				log.Printf("Slack connection error")
 			case socketmode.EventTypeSlashCommand:
-				handleSlashCommand(client, api, cfg, runner, evt)
+				handleSlashCommand(client, api, cfg, peerService, evt)
 			}
 		}
 	}
@@ -70,7 +93,7 @@ func handleSlashCommand(
 	client *socketmode.Client,
 	api *slack.Client,
 	cfg config.Config,
-	runner *announce.Runner,
+	peerService *peer.Service,
 	evt socketmode.Event,
 ) {
 	cmd, ok := evt.Data.(slack.SlashCommand)
@@ -102,28 +125,42 @@ func handleSlashCommand(
 	})
 
 	go func() {
-		runCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		runCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
 		defer cancel()
 
-		err := runner.Run(runCtx, parsed)
-		if err != nil {
-			log.Printf("announcement failed target=%s user=%s: %v", parsed.Target, cmd.UserID, err)
-			_, errPost := api.PostEphemeral(
-				cmd.ChannelID,
-				cmd.UserID,
-				slack.MsgOptionText(fmt.Sprintf("❌ Announcement to *%s* failed: %v", parsed.Target, err), false),
-			)
+		results := peerService.Execute(runCtx, parsed)
+		var okNodes []string
+		var failed []string
+		for _, result := range results {
+			if result.Error != nil {
+				failed = append(failed, fmt.Sprintf("%s: %v", result.Node, result.Error))
+				continue
+			}
+			okNodes = append(okNodes, result.Node)
+		}
+
+		if len(failed) > 0 {
+			log.Printf("announcement partial/failed target=%s user=%s failures=%v", parsed.Target, cmd.UserID, failed)
+			text := "⚠️ Announcement completed with issues."
+			if len(okNodes) > 0 {
+				text += fmt.Sprintf("\n✅ %s", strings.Join(okNodes, ", "))
+			}
+			text += fmt.Sprintf("\n❌ %s", strings.Join(failed, "\n❌ "))
+			_, errPost := api.PostEphemeral(cmd.ChannelID, cmd.UserID, slack.MsgOptionText(text, false))
 			if errPost != nil {
-				log.Printf("failed to post Slack error response: %v", errPost)
+				log.Printf("failed to post Slack result: %v", errPost)
 			}
 			return
 		}
 
-		log.Printf("announcement sent target=%s user=%s", parsed.Target, cmd.UserID)
+		log.Printf("announcement sent target=%s user=%s nodes=%v", parsed.Target, cmd.UserID, okNodes)
 		_, errPost := api.PostEphemeral(
 			cmd.ChannelID,
 			cmd.UserID,
-			slack.MsgOptionText(fmt.Sprintf("✅ Announcement sent to *%s* %d time(s).", parsed.Target, parsed.Repeat), false),
+			slack.MsgOptionText(
+				fmt.Sprintf("✅ Announcement sent %d time(s) to: *%s*.", parsed.Repeat, strings.Join(okNodes, ", ")),
+				false,
+			),
 		)
 		if errPost != nil {
 			log.Printf("failed to post Slack success response: %v", errPost)

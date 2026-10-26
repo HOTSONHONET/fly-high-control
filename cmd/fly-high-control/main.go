@@ -110,7 +110,7 @@ func handleSlashCommand(
 	switch cmd.Command {
 	case "/announce":
 		handleAnnounceCommand(client, api, cfg, peerService, evt, cmd)
-	case "/status", "/gpu", "/disk", "/docker", "/uptime", "/battery":
+	case "/fly-status", "/gpu", "/disk", "/docker", "/uptime", "/battery":
 		handleMonitorCommand(client, api, cfg, peerService, evt, cmd)
 	default:
 		client.Ack(*evt.Request, map[string]any{"text": "Unsupported command."})
@@ -203,6 +203,9 @@ func handleMonitorCommand(
 	}
 
 	kind := strings.TrimPrefix(cmd.Command, "/")
+	if kind == "fly-status" {
+		kind = "status"
+	}
 	client.Ack(*evt.Request, map[string]any{
 		"text": fmt.Sprintf("📊 Fetching %s from *%s*…", kind, target),
 	})

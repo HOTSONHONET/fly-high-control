@@ -15,3 +15,7 @@ services:
     # Required because every node executes its own announcements locally.
     devices:
       - /dev/snd:/dev/snd
+
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro

@@ -137,6 +137,17 @@ func handleAnnounceCommand(
 		"text": fmt.Sprintf("🔊 Sending announcement to *%s* %d time(s)…\nMessage: %s", parsed.Target, parsed.Repeat, parsed.Message),
 	})
 
+	_, _, err = api.PostMessage(
+		cmd.ChannelID,
+		slack.MsgOptionText(
+			fmt.Sprintf("📣 *Announcement requested*\nBy: <@%s>\nTarget: *%s*\nRepeat: *%d*\nMessage: %s", cmd.UserID, parsed.Target, parsed.Repeat, parsed.Message),
+			false,
+		),
+	)
+	if err != nil {
+		log.Printf("failed to write announcement history to Slack: %v", err)
+	}
+
 	go func() {
 		runCtx, cancel := context.WithTimeout(context.Background(), cfg.AnnounceTimeout)
 		defer cancel()

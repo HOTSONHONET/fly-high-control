@@ -12,6 +12,7 @@ import (
 
 	"github.com/HOTSONHONET/fly-high-control/internal/announce"
 	"github.com/HOTSONHONET/fly-high-control/internal/config"
+	"github.com/HOTSONHONET/fly-high-control/internal/monitor"
 )
 
 type AnnounceRequest struct {
@@ -25,16 +26,18 @@ type Result struct {
 }
 
 type Service struct {
-	cfg    config.Config
-	runner *announce.Runner
-	client *http.Client
+	cfg       config.Config
+	runner    *announce.Runner
+	collector *monitor.Collector
+	client    *http.Client
 }
 
 func New(cfg config.Config, runner *announce.Runner) *Service {
 	return &Service{
-		cfg:    cfg,
-		runner: runner,
-		client: &http.Client{Timeout: 20 * time.Second},
+		cfg:       cfg,
+		runner:    runner,
+		collector: monitor.New(cfg.NodeName),
+		client:    &http.Client{Timeout: 20 * time.Second},
 	}
 }
 
@@ -45,6 +48,7 @@ func (s *Service) Handler() http.Handler {
 		_, _ = w.Write([]byte("ok"))
 	})
 	mux.HandleFunc("/api/v1/announce", s.handleAnnounce)
+	mux.HandleFunc("/api/v1/monitor/", s.handleMonitor)
 	return mux
 }
 
@@ -124,4 +128,64 @@ func (s *Service) send(ctx context.Context, baseURL, message string, repeat int)
 		return fmt.Errorf("peer returned %s: %s", resp.Status, strings.TrimSpace(string(msg)))
 	}
 	return nil
+}
+
+func (s *Service) handleMonitor(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if r.Header.Get("Authorization") != "Bearer "+s.cfg.ClusterToken {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	kind := strings.TrimPrefix(r.URL.Path, "/api/v1/monitor/")
+	report := s.collector.Collect(r.Context(), kind)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(report)
+}
+
+func (s *Service) Monitor(ctx context.Context, target, kind string) []monitor.Report {
+	if target == "all" {
+		reports := []monitor.Report{s.collector.Collect(ctx, kind)}
+		for name, p := range s.cfg.Peers {
+			reports = append(reports, s.fetchMonitor(ctx, name, p.URL, kind))
+		}
+		return reports
+	}
+	if target == s.cfg.NodeName {
+		return []monitor.Report{s.collector.Collect(ctx, kind)}
+	}
+	p, ok := s.cfg.Peers[target]
+	if !ok {
+		return []monitor.Report{{Node: target, Kind: kind, Summary: "target not configured"}}
+	}
+	return []monitor.Report{s.fetchMonitor(ctx, target, p.URL, kind)}
+}
+
+func (s *Service) fetchMonitor(ctx context.Context, name, baseURL, kind string) monitor.Report {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/api/v1/monitor/"+kind, nil)
+	if err != nil {
+		return monitor.Report{Node: name, Kind: kind, Summary: err.Error()}
+	}
+	req.Header.Set("Authorization", "Bearer "+s.cfg.ClusterToken)
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return monitor.Report{Node: name, Kind: kind, Summary: "unreachable: " + err.Error()}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return monitor.Report{Node: name, Kind: kind, Summary: fmt.Sprintf("%s: %s", resp.Status, strings.TrimSpace(string(msg)))}
+	}
+
+	var report monitor.Report
+	if err := json.NewDecoder(resp.Body).Decode(&report); err != nil {
+		return monitor.Report{Node: name, Kind: kind, Summary: "decode failed: " + err.Error()}
+	}
+	return report
 }

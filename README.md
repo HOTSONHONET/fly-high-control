@@ -1,8 +1,16 @@
 # fly-high-control
 
-Slack control plane for the Fly High NAS / homelab.
+Distributed Slack control plane for the Fly High homelab.
 
-## Current feature
+Every machine runs the same service. Each node:
+
+- connects to Slack over Socket Mode
+- exposes a private authenticated peer API on port 8787
+- executes its own announcements locally
+- can forward commands to peer nodes
+- can continue handling Slack commands even if another node is offline
+
+## /announce
 
 ```text
 /announce <num-times> <legion|acer|all> <message>
@@ -16,7 +24,34 @@ Examples:
 /announce 3 all Testing the announcement system
 ```
 
-The controller uses Slack Socket Mode, so it does not require a public HTTP endpoint.
+The repeat count must be between 1 and 10.
+
+## Architecture
+
+```text
+                      Slack
+                 Socket Mode
+                 /          \
+                /            \
+             Acer          Legion
+       fly-high-control  fly-high-control
+             |              |
+       local speaker    local speaker
+             \              /
+              \--- peer HTTP
+                  :8787
+```
+
+Both nodes may keep a Socket Mode connection open. A Slack command is handled by whichever node receives it. That node becomes the coordinator for that command only.
+
+For `/announce 3 all hello`, if Acer receives the Slack event:
+
+1. Acer plays `hello` locally 3 times.
+2. Acer sends an authenticated HTTP request to Legion.
+3. Legion plays `hello` locally 3 times.
+4. Slack receives per-node success/failure results.
+
+If Legion is down, Acer still completes its own announcement and Slack reports Legion as unreachable.
 
 ## Slack app configuration
 
@@ -27,146 +62,168 @@ Configure the Slack app with:
 - Bot scopes:
   - `commands`
   - `chat:write`
-- Slash command: `/announce`
+- Slash command:
+  - `/announce`
+
+Both nodes use the same Slack app credentials.
+
+## Shared cluster authentication
+
+Generate one strong random secret:
+
+```bash
+openssl rand -hex 32
+```
+
+Put the same value on every node:
+
+```env
+FLY_HIGH_CLUSTER_TOKEN=<same-secret-on-all-nodes>
+```
+
+Peer HTTP requests use:
+
+```text
+Authorization: Bearer <shared-cluster-token>
+```
+
+The peer API is intended only for your private LAN / WARP network.
 
 ## Configuration
 
-Copy the template:
+Copy:
 
 ```bash
 cp .env.example .env
 ```
 
-Then fill in your real tokens and Slack member ID:
+Never commit `.env`.
+
+### Acer .env
 
 ```env
 SLACK_APP_TOKEN=xapp-...
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_ALLOWED_USER_IDS=U...
+
+NODE_NAME=acer
+FLY_HIGH_CLUSTER_TOKEN=<shared-secret>
+LISTEN_ADDR=:8787
+
+ANNOUNCE_AUDIO_DEVICE=default
+
+PEERS=legion=http://192.168.0.10:8787
 ```
 
-Never commit `.env`.
-
-### Announcement targets
-
-A target can run in one of two modes:
-
-- `local`: run `espeak-ng` and `aplay` on the controller host.
-- `ssh`: connect to another host over SSH, then run `espeak-ng` and `aplay` there.
-
-The default template assumes the controller runs on the Legion:
+### Legion .env
 
 ```env
-ANNOUNCE_TARGETS=legion,acer
+SLACK_APP_TOKEN=xapp-...
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_ALLOWED_USER_IDS=U...
 
-ANNOUNCE_LEGION_MODE=local
-ANNOUNCE_LEGION_AUDIO_DEVICE=plughw:1,0
+NODE_NAME=legion
+FLY_HIGH_CLUSTER_TOKEN=<shared-secret>
+LISTEN_ADDR=:8787
 
-ANNOUNCE_ACER_MODE=ssh
-ANNOUNCE_ACER_SSH_HOST=fly-high-acer
-ANNOUNCE_ACER_AUDIO_DEVICE=default
+ANNOUNCE_AUDIO_DEVICE=plughw:1,0
+
+PEERS=acer=http://192.168.0.7:8787
 ```
 
-For SSH targets, the controller host must already be able to SSH to the target non-interactively.
+The peer addresses use the machines' reserved LAN IPs, so no SSH aliases or DNS configuration are required.
 
-## Host dependencies
+## Docker deployment
 
-Install these on each machine that will speak:
-
-```bash
-sudo apt update
-sudo apt install -y espeak-ng alsa-utils
-```
-
-For remote targets, `base64` is also required (provided by GNU coreutils on Ubuntu).
-
-## Run
-
-```bash
-go mod tidy
-go test ./...
-go run ./cmd/fly-high-control
-```
-
-When the service connects successfully, it logs:
-
-```text
-connected to Slack
-```
-
-Then invoke `/announce` from Slack. The repeat count must be between 1 and 10.
-
-## Security
-
-`SLACK_ALLOWED_USER_IDS` is mandatory. Requests from Slack users not in that allowlist are rejected before any announcement is executed.
-
-Messages are passed directly as process arguments for local TTS and are base64 encoded before being sent to SSH targets, so announcement text is not treated as a shell command.
-
-
-## Run with Docker Compose
-
-This is the recommended deployment mode for an always-on NAS host.
-
-Build and start:
+Build and start on both Acer and Legion:
 
 ```bash
 docker compose up -d --build
 ```
 
-Check status and logs:
+Check:
 
 ```bash
 docker compose ps
 docker compose logs -f fly-high-control
 ```
 
-Stop the service:
+The service uses:
 
-```bash
-docker compose down
+```yaml
+restart: unless-stopped
 ```
 
-Because the service uses `restart: unless-stopped`, Docker will restart it automatically after crashes and host reboots once Docker itself starts.
+so it returns automatically after Docker / host restarts.
 
-### Local audio from the container
+The container exposes:
 
-The Compose file passes the host ALSA device tree into the container:
+```text
+8787/tcp
+```
+
+and receives the host ALSA devices:
 
 ```yaml
 devices:
   - /dev/snd:/dev/snd
 ```
 
-For Legion announcements, keep:
+No SSH keys are required between nodes.
 
-```env
-ANNOUNCE_LEGION_MODE=local
-ANNOUNCE_LEGION_AUDIO_DEVICE=plughw:1,0
+## Peer health check
+
+From Acer:
+
+```bash
+curl http://192.168.0.10:8787/healthz
 ```
 
-If the ALSA device numbering changes, check the host with:
+From Legion:
+
+```bash
+curl http://192.168.0.7:8787/healthz
+```
+
+Expected:
+
+```text
+ok
+```
+
+## Direct peer API test
+
+The announcement endpoint requires the shared cluster token:
+
+```bash
+curl -X POST http://192.168.0.10:8787/api/v1/announce \
+  -H "Authorization: Bearer $FLY_HIGH_CLUSTER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"message":"hello from acer","repeat":1}'
+```
+
+A successful request returns HTTP 204.
+
+## Host audio
+
+Each node performs TTS locally using:
+
+```text
+espeak-ng -> WAV -> aplay -> local speaker
+```
+
+To inspect ALSA playback devices:
 
 ```bash
 aplay -l
 ```
 
-and update the environment value.
+Then set the corresponding `ANNOUNCE_AUDIO_DEVICE`.
 
-### SSH announcements from the container
+## Security
 
-The Compose file mounts the host SSH directory read-only:
-
-```yaml
-volumes:
-  - ${HOME}/.ssh:/root/.ssh:ro
-```
-
-Before starting the controller, verify the host can reach the remote machine non-interactively:
-
-```bash
-ssh fly-high-acer 'echo ok'
-```
-
-The same SSH config, key and `known_hosts` entries are then available inside the container.
-
-If Docker Compose is launched from a context where `HOME` is not set, replace `${HOME}` in `docker-compose.yml` with the absolute home path, for example `/home/hotson/.ssh`.
+- `SLACK_ALLOWED_USER_IDS` is mandatory.
+- Peer requests require `FLY_HIGH_CLUSTER_TOKEN`.
+- The service executes fixed local TTS actions rather than accepting shell commands.
+- Announcement text is passed as a process argument to `espeak-ng`.
+- Keep port 8787 available only to your trusted LAN / private network.

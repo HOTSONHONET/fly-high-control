@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 type Peer struct {
@@ -19,6 +20,7 @@ type Config struct {
 	ListenAddr     string
 	ClusterToken   string
 	AudioDevice    string
+	AnnounceTimeout time.Duration
 	Peers          map[string]Peer
 	TargetNames    map[string]struct{}
 }
@@ -32,6 +34,7 @@ func Load() (Config, error) {
 		ListenAddr:   defaultIfEmpty(os.Getenv("LISTEN_ADDR"), ":8787"),
 		ClusterToken: strings.TrimSpace(os.Getenv("FLY_HIGH_CLUSTER_TOKEN")),
 		AudioDevice:  strings.TrimSpace(os.Getenv("ANNOUNCE_AUDIO_DEVICE")),
+		AnnounceTimeout: durationOrDefault(os.Getenv("ANNOUNCE_TIMEOUT"), 5*time.Minute),
 		Peers:        map[string]Peer{},
 		TargetNames:  map[string]struct{}{},
 	}
@@ -92,4 +95,16 @@ func defaultIfEmpty(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func durationOrDefault(value string, fallback time.Duration) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := time.ParseDuration(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }

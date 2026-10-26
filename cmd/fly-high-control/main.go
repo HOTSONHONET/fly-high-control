@@ -101,17 +101,30 @@ func handleSlashCommand(
 		return
 	}
 
-	if cmd.Command != "/announce" {
-		client.Ack(*evt.Request, map[string]any{"text": "Unsupported command."})
-		return
-	}
-
 	if _, allowed := cfg.AllowedUsers[strings.ToLower(cmd.UserID)]; !allowed {
-		client.Ack(*evt.Request, map[string]any{"text": "⛔ You are not allowed to use /announce."})
-		log.Printf("rejected /announce from Slack user %s", cmd.UserID)
+		client.Ack(*evt.Request, map[string]any{"text": "⛔ You are not allowed to use Fly High control commands."})
+		log.Printf("rejected %s from Slack user %s", cmd.Command, cmd.UserID)
 		return
 	}
 
+	switch cmd.Command {
+	case "/announce":
+		handleAnnounceCommand(client, api, cfg, peerService, evt, cmd)
+	case "/status", "/gpu", "/disk", "/docker", "/uptime", "/battery":
+		handleMonitorCommand(client, api, cfg, peerService, evt, cmd)
+	default:
+		client.Ack(*evt.Request, map[string]any{"text": "Unsupported command."})
+	}
+}
+
+func handleAnnounceCommand(
+	client *socketmode.Client,
+	api *slack.Client,
+	cfg config.Config,
+	peerService *peer.Service,
+	evt socketmode.Event,
+	cmd slack.SlashCommand,
+) {
 	parsed, err := announce.Parse(cmd.Text, cfg.TargetNames)
 	if err != nil {
 		client.Ack(*evt.Request, map[string]any{
@@ -164,6 +177,53 @@ func handleSlashCommand(
 		)
 		if errPost != nil {
 			log.Printf("failed to post Slack success response: %v", errPost)
+		}
+	}()
+}
+
+func handleMonitorCommand(
+	client *socketmode.Client,
+	api *slack.Client,
+	cfg config.Config,
+	peerService *peer.Service,
+	evt socketmode.Event,
+	cmd slack.SlashCommand,
+) {
+	target := strings.ToLower(strings.TrimSpace(cmd.Text))
+	if target == "" {
+		target = cfg.NodeName
+	}
+	if target != "all" {
+		if _, ok := cfg.TargetNames[target]; !ok {
+			client.Ack(*evt.Request, map[string]any{
+				"text": fmt.Sprintf("❌ Unknown target %q. Use: acer, legion, or all.", target),
+			})
+			return
+		}
+	}
+
+	kind := strings.TrimPrefix(cmd.Command, "/")
+	client.Ack(*evt.Request, map[string]any{
+		"text": fmt.Sprintf("📊 Fetching %s from *%s*…", kind, target),
+	})
+
+	go func() {
+		runCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+
+		reports := peerService.Monitor(runCtx, target, kind)
+		sections := make([]string, 0, len(reports))
+		for _, report := range reports {
+			sections = append(sections, fmt.Sprintf("*%s*\n%s", report.Node, report.Summary))
+		}
+
+		_, errPost := api.PostEphemeral(
+			cmd.ChannelID,
+			cmd.UserID,
+			slack.MsgOptionText(strings.Join(sections, "\n\n"), false),
+		)
+		if errPost != nil {
+			log.Printf("failed to post %s result: %v", kind, errPost)
 		}
 	}()
 }

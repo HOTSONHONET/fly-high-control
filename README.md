@@ -341,3 +341,30 @@ If Acer receives the Slack event:
 4. Acer posts both reports back to you in Slack.
 
 If Legion is offline, Acer's report still succeeds and Legion is shown as unreachable.
+
+
+## Announcement timeout
+
+Longer messages repeated many times can take much longer than a short word such as `testing`.
+
+Each node now uses a configurable timeout:
+
+```env
+ANNOUNCE_TIMEOUT=5m
+```
+
+The same timeout is used for:
+- local announcement execution
+- peer HTTP requests
+- the Slack command worker
+
+Increase it if you intentionally send very long announcements or many repeats.
+
+Slack responses now include the exact announcement message, for example:
+
+```text
+✅ Announcement sent 10 time(s) to: acer.
+Message: testing, please don't mind
+```
+
+This makes the command result visible in Slack history along with the message content.

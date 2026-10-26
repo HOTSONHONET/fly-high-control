@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/HOTSONHONET/fly-high-control/internal/announce"
 	"github.com/HOTSONHONET/fly-high-control/internal/config"
